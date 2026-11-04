@@ -383,6 +383,53 @@ describe('parseResponse', async () => {
     }),
   ])
 
+  it.each([
+    'application/json ; charset=utf-8',
+    'application/json\t; charset=utf-8',
+    'application/problem+json ; charset=utf-8',
+    'application/vnd.github.v3+json\t; charset=utf-8',
+  ])('should parse JSON with whitespace before parameters in %s', async (contentType) => {
+    const app = new Hono().get('/json', (c) =>
+      c.json({ message: 'hi' }, 200, { 'Content-Type': contentType })
+    )
+    const client = hc<typeof app>('http://localhost', { fetch: app.request })
+
+    const result = await parseResponse(client.json.$get())
+
+    expect(result).toEqual({ message: 'hi' })
+    type _verify = Expect<Equal<typeof result, { message: string }>>
+  })
+
+  it.each([' ', '\t'])(
+    'should parse JSON error data with %j before parameters',
+    async (whitespace) => {
+      const app = new Hono().get('/error', (c) =>
+        c.json({ error: 'bad request' }, 400, {
+          'Content-Type': `application/problem+json${whitespace}; charset=utf-8`,
+        })
+      )
+      const client = hc<typeof app>('http://localhost', { fetch: app.request })
+
+      await expect(parseResponse(client.error.$get())).rejects.toMatchObject({
+        name: 'DetailedError',
+        statusCode: 400,
+        detail: { data: { error: 'bad request' } },
+      })
+    }
+  )
+
+  it.each(['text/plain ; charset=utf-8', 'application/jsonp ; charset=utf-8'])(
+    'should keep non-JSON responses as text for %s',
+    async (contentType) => {
+      const app = new Hono().get('/text', (c) =>
+        c.text('{"message":"hi"}', 200, { 'Content-Type': contentType })
+      )
+      const client = hc<typeof app>('http://localhost', { fetch: app.request })
+
+      expect(await parseResponse(client.text.$get())).toBe('{"message":"hi"}')
+    }
+  )
+
   it('should parse json response with _bodyInit when body is undefined', async () => {
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
